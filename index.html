@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Avaliação Docente UFRN</title>
+<script src="lib/sql-wasm.min.js"></script>
 <script src="lib/chart.umd.min.js"></script>
 <style>
   :root{
@@ -273,15 +274,22 @@
   <footer>Dados de avaliação de docência da UFRN · página estática gerada para consulta pessoal · nenhum dado é enviado a servidores externos.</footer>
 </div>
 
-
+<script>
 async function loadData(){
-  const core = await import('lib/sql-wasm.min.js');
   try{
+    const SQL = await initSqlJs({locateFile: file => 'lib/' + file});
     const resp = await fetch('database.sqlite');
     if(!resp.ok) throw new Error('HTTP ' + resp.status);
-    const db = new core.Database(await resp.arrayBuffer());
-    const res = db.exec("SELECT d.nome_docente,r.ano,r.periodo,r.qtd_discentes,r.postura_profissional_media,r.postura_profissional_DP,r.atuacao_profissional_media,r.atuacao_profissional_DP,r.autoavaliacao_aluno_media,r.autoavaliacao_aluno_DP FROM registros r JOIN docentes d ON d.id_docente=r.id_docente ORDER BY r.id_docente,r.ano,r.periodo");
-    const RAW={}; res.forEach(col=>{const m2={}; col.values.forEach(v=>{m2[v[0]]=[v[1],v.slice(2)];}); Object.assign(RAW,m2);});
+    const db = new SQL.Database(new Uint8Array(await resp.arrayBuffer()));
+    const res = db.exec("SELECT d.id_docente,d.nome_docente,r.ano,r.periodo,r.qtd_discentes,r.postura_profissional_media,r.postura_profissional_DP,r.atuacao_profissional_media,r.atuacao_profissional_DP,r.autoavaliacao_aluno_media,r.autoavaliacao_aluno_DP FROM registros r JOIN docentes d ON d.id_docente=r.id_docente ORDER BY r.id_docente,r.ano,r.periodo");
+    const RAW={};
+    if(res.length){
+      res[0].values.forEach(row => {
+        const [id, nome, ...registro] = row;
+        if(!RAW[id]) RAW[id] = [nome, []];
+        RAW[id][1].push(registro);
+      });
+    }
     globalThis.RAW=RAW;
   }catch(e){ console.error('Falha ao carregar banco:', e); return; }
   init();
@@ -529,6 +537,6 @@ document.querySelectorAll('table.turmas th').forEach(th => {
 });
 
 }
-
+</script>
 </body>
 </html>
