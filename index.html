@@ -281,7 +281,7 @@ async function loadData(){
     if(!resp.ok) throw new Error('HTTP ' + resp.status);
     const db = new core.Database(await resp.arrayBuffer());
     const res = db.exec("SELECT d.nome_docente,r.ano,r.periodo,r.qtd_discentes,r.postura_profissional_media,r.postura_profissional_DP,r.atuacao_profissional_media,r.atuacao_profissional_DP,r.autoavaliacao_aluno_media,r.autoavaliacao_aluno_DP FROM registros r JOIN docentes d ON d.id_docente=r.id_docente ORDER BY r.id_docente,r.ano,r.periodo");
-    const RAW={}; res.forEach(col=>{const m2={}; col.values.forEach(v=>{m2[v[0]]=[v[1],v.slice(2)];}); RAW=m2;});
+    const RAW={}; res.forEach(col=>{const m2={}; col.values.forEach(v=>{m2[v[0]]=[v[1],v.slice(2)];}); Object.assign(RAW,m2);});
     globalThis.RAW=RAW;
   }catch(e){ console.error('Falha ao carregar banco:', e); return; }
   init();
