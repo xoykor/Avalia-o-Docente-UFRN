@@ -32,6 +32,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 CKAN = "https://dados.ufrn.br/api/3/action/package_show?id={}"
+FALLBACK_APPROVAL_URL = "https://raw.githubusercontent.com/alvarofpp/analysis-ufrn/main/data/taxas_aprovacao.csv"
+FALLBACK_SNAPSHOT_DATE = "2023-08-08"
 USER_AGENT = "Avalia-o-Docente-UFRN/1.0 (+https://github.com/xoykor/Avalia-o-Docente-UFRN)"
 
 
@@ -70,13 +72,14 @@ def fetch_bytes(url: str, *, timeout: int = 120, attempts: int = 5) -> bytes:
 
 
 def request_json(url: str) -> dict:
-    return json.loads(fetch_bytes(url, timeout=45, attempts=5).decode("utf-8-sig"))
+    # Falha rápido: se o portal estiver indisponível, usamos o snapshot GitHub.
+    return json.loads(fetch_bytes(url, timeout=15, attempts=2).decode("utf-8-sig"))
 
 
 def resources_from_dataset_page(package: str) -> list[dict]:
     """Fallback quando o endpoint CKAN /api/3/action fica indisponível."""
     page_url = f"https://dados.ufrn.br/dataset/{package}"
-    html = unescape(fetch_bytes(page_url, timeout=60, attempts=5).decode("utf-8", "replace"))
+    html = unescape(fetch_bytes(page_url, timeout=20, attempts=2).decode("utf-8", "replace"))
 
     # O CKAN inclui os links de download dos recursos no HTML da página.
     candidates = re.findall(
@@ -298,13 +301,7 @@ def collect_component_names(wanted_components: set[int]):
     return components
 
 
-def write_approval_table(
-    conn: sqlite3.Connection,
-    eval_by_turma: dict[int, list[tuple[int, int, int]]],
-    counts: dict[int, list[int]],
-    turma_component: dict[int, int],
-    components: dict[int, tuple[str | None, str | None]],
-):
+def create_approval_schema(conn: sqlite3.Connection):
     conn.executescript(
         """
         DROP TABLE IF EXISTS aprovacao_turmas;
@@ -316,9 +313,9 @@ def write_approval_table(
             id_componente_curricular INTEGER,
             codigo_componente TEXT,
             nome_componente TEXT,
-            aprovados INTEGER NOT NULL,
-            reprovados INTEGER NOT NULL,
-            total_finalizados INTEGER NOT NULL,
+            aprovados INTEGER,
+            reprovados INTEGER,
+            total_finalizados INTEGER,
             taxa_aprovacao REAL NOT NULL,
             PRIMARY KEY (id_docente, id_turma)
         );
@@ -332,6 +329,109 @@ def write_approval_table(
         );
         """
     )
+
+
+def write_fallback_snapshot(conn: sqlite3.Connection) -> int:
+    """Publica um snapshot histórico quando dados.ufrn.br está indisponível.
+
+    O snapshot é produzido por um projeto público que calculou taxas a partir
+    dos mesmos conjuntos oficiais da UFRN. Ele não traz contagens nem período
+    por turma, então esses campos ficam indisponíveis e a UI sinaliza isso.
+    """
+    print(
+        "[fallback] dados.ufrn.br indisponível; usando snapshot histórico "
+        f"{FALLBACK_SNAPSHOT_DATE} hospedado no GitHub."
+    )
+    raw = fetch_bytes(FALLBACK_APPROVAL_URL, timeout=120, attempts=3)
+    text = io.StringIO(raw.decode("utf-8-sig", "replace"))
+    reader = csv.DictReader(text)
+
+    ids_by_name: dict[str, list[int]] = defaultdict(list)
+    for id_docente, nome in conn.execute("SELECT id_docente,nome_docente FROM docentes"):
+        docente = as_int(id_docente)
+        if docente is not None:
+            ids_by_name[norm(str(nome))].append(docente)
+
+    create_approval_schema(conn)
+    rows = []
+    skipped_ambiguous = 0
+    pseudo_turma = -1
+    for row in reader:
+        nome_docente = str(row.get("nome_docente") or "").strip()
+        ids = ids_by_name.get(norm(nome_docente), [])
+        if len(ids) != 1:
+            if len(ids) > 1:
+                skipped_ambiguous += 1
+            continue
+
+        cid = as_int(row.get("id_componente_curricular"))
+        try:
+            taxa = float(row.get("taxa_aprovacao") or "")
+        except ValueError:
+            continue
+
+        nome_full = str(row.get("nome_componente") or "").strip()
+        if " - " in nome_full:
+            codigo, nome = nome_full.split(" - ", 1)
+        else:
+            codigo, nome = None, nome_full or None
+
+        rows.append(
+            (
+                ids[0],
+                pseudo_turma,
+                0,
+                0,
+                cid,
+                codigo,
+                nome,
+                None,
+                None,
+                None,
+                taxa,
+            )
+        )
+        pseudo_turma -= 1
+
+    conn.executemany(
+        """
+        INSERT INTO aprovacao_turmas
+        (id_docente,id_turma,ano,periodo,id_componente_curricular,codigo_componente,
+         nome_componente,aprovados,reprovados,total_finalizados,taxa_aprovacao)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        rows,
+    )
+    metadata = {
+        "aprovacao_modo": "fallback_snapshot",
+        "aprovacao_snapshot_data": FALLBACK_SNAPSHOT_DATE,
+        "aprovacao_fonte": "alvarofpp/analysis-ufrn:data/taxas_aprovacao.csv",
+        "aprovacao_metodologia": (
+            "Snapshot histórico: média das taxas de aprovação por turma para cada "
+            "docente/componente. Sem contagens de alunos/turmas por registro."
+        ),
+        "aprovacao_atualizada_em": datetime.now(timezone.utc).isoformat(),
+    }
+    conn.executemany(
+        "INSERT OR REPLACE INTO metadados(chave,valor) VALUES(?,?)",
+        metadata.items(),
+    )
+    conn.commit()
+    print(
+        f"[fallback] {len(rows):,} taxas históricas incorporadas; "
+        f"{skipped_ambiguous} nome(s) ambíguo(s) ignorado(s)."
+    )
+    return len(rows)
+
+
+def write_approval_table(
+    conn: sqlite3.Connection,
+    eval_by_turma: dict[int, list[tuple[int, int, int]]],
+    counts: dict[int, list[int]],
+    turma_component: dict[int, int],
+    components: dict[int, tuple[str | None, str | None]],
+):
+    create_approval_schema(conn)
 
     rows = []
     for turma, links in eval_by_turma.items():
@@ -356,16 +456,17 @@ def write_approval_table(
         """,
         rows,
     )
-    conn.execute(
+    conn.executemany(
         "INSERT OR REPLACE INTO metadados(chave,valor) VALUES(?,?)",
-        ("aprovacao_atualizada_em", datetime.now(timezone.utc).isoformat()),
-    )
-    conn.execute(
-        "INSERT OR REPLACE INTO metadados(chave,valor) VALUES(?,?)",
-        (
-            "aprovacao_metodologia",
-            "Aprovados / (Aprovados + Reprovados); cancelamentos, trancamentos e situações sem resultado final excluídos.",
-        ),
+        {
+            "aprovacao_modo": "oficial_detalhado",
+            "aprovacao_fonte": "Dados Abertos da UFRN",
+            "aprovacao_atualizada_em": datetime.now(timezone.utc).isoformat(),
+            "aprovacao_metodologia": (
+                "Aprovados / (Aprovados + Reprovados); cancelamentos, trancamentos "
+                "e situações sem resultado final excluídos."
+            ),
+        }.items(),
     )
     conn.commit()
     return len(rows)
@@ -387,18 +488,27 @@ def main() -> int:
         wanted_turmas = set(eval_by_turma)
         print(f"{len(wanted_turmas):,} turmas avaliadas em {len(semesters)} períodos.")
 
-        counts = collect_results(wanted_turmas, semesters)
-        turma_component = collect_turma_components(wanted_turmas, semesters)
-        wanted_components = {c for c in turma_component.values() if c is not None}
-        components = collect_component_names(wanted_components)
+        try:
+            counts = collect_results(wanted_turmas, semesters)
+            turma_component = collect_turma_components(wanted_turmas, semesters)
+            wanted_components = {c for c in turma_component.values() if c is not None}
+            components = collect_component_names(wanted_components)
 
-        inserted = write_approval_table(
-            conn, eval_by_turma, counts, turma_component, components
-        )
-        print(
-            f"Concluído: {inserted:,} associações docente/turma com resultado final; "
-            f"{len(components):,} componentes identificados."
-        )
+            inserted = write_approval_table(
+                conn, eval_by_turma, counts, turma_component, components
+            )
+            print(
+                f"Concluído: {inserted:,} associações docente/turma com resultado final; "
+                f"{len(components):,} componentes identificados."
+            )
+        except Exception as exc:
+            print(
+                f"[fallback] coleta oficial falhou: {exc}",
+                file=sys.stderr,
+            )
+            inserted = write_fallback_snapshot(conn)
+            if inserted == 0:
+                raise RuntimeError("Fallback de aprovação ficou vazio.") from exc
     finally:
         conn.close()
     return 0
