@@ -386,6 +386,7 @@ async function loadData(){
       });
     }
     const APPROVAL={};
+    const META={};
     try{
       const ar = db.exec("SELECT id_docente,id_turma,ano,periodo,id_componente_curricular,codigo_componente,nome_componente,aprovados,reprovados,total_finalizados,taxa_aprovacao FROM aprovacao_turmas");
       if(ar.length){
@@ -395,11 +396,16 @@ async function loadData(){
           APPROVAL[id].push(registro);
         });
       }
+      const mr = db.exec("SELECT chave,valor FROM metadados WHERE chave LIKE 'aprovacao_%'");
+      if(mr.length){
+        mr[0].values.forEach(([chave,valor]) => { META[chave]=valor; });
+      }
     }catch(err){
       console.info('Banco ainda não possui dados de aprovação:', err);
     }
     globalThis.RAW=RAW;
     globalThis.APPROVAL=APPROVAL;
+    globalThis.APPROVAL_META=META;
   }catch(e){ console.error('Falha ao carregar banco:', e); return; }
   init();
 }
@@ -411,6 +417,9 @@ function init(){
 const METRIC_LABELS = ['Postura Profissional','Atuação Profissional','Autoavaliação do Aluno'];
 const COLORS = ['#9c1c2e','#2c4a63','#3f6b4f'];
 const APPROVAL = globalThis.APPROVAL || {};
+const APPROVAL_META = globalThis.APPROVAL_META || {};
+const IS_APPROVAL_SNAPSHOT = APPROVAL_META.aprovacao_modo === 'fallback_snapshot';
+const APPROVAL_SNAPSHOT_DATE = APPROVAL_META.aprovacao_snapshot_data || '2023-08-08';
 const approvalByTurma = {};
 Object.values(APPROVAL).forEach(rows => rows.forEach(r => { approvalByTurma[String(r[0])] = r; }));
 
@@ -432,10 +441,26 @@ function initApprovalComparison(){
   const input = document.getElementById('cmp-course');
   const datalist = document.getElementById('cmp-course-options');
   const yearSel = document.getElementById('cmp-ano');
+  const periodSel = document.getElementById('cmp-periodo');
+  const minInput = document.getElementById('cmp-min');
   const note = document.getElementById('cmp-note');
   datalist.innerHTML = componentList.map(c=>`<option value="${escapeHtml(c.label)}"></option>`).join('');
-  const years = [...new Set(Object.values(APPROVAL).flat().map(r=>r[1]))].filter(x=>x!=null).sort((a,b)=>a-b);
-  yearSel.innerHTML = '<option value="all">Todos</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
+
+  if(IS_APPROVAL_SNAPSHOT){
+    yearSel.innerHTML = '<option value="all">Indisponível no snapshot</option>';
+    yearSel.disabled = true;
+    periodSel.innerHTML = '<option value="all">Indisponível no snapshot</option>';
+    periodSel.disabled = true;
+    minInput.value = '';
+    minInput.placeholder = 'Indisponível';
+    minInput.disabled = true;
+    note.textContent = `Snapshot histórico de ${APPROVAL_SNAPSHOT_DATE}. A fonte de contingência fornece a taxa por docente/disciplina, mas não fornece contagens por turma/aluno nem recorte por semestre.`;
+  }else{
+    const years = [...new Set(Object.values(APPROVAL).flat().map(r=>r[1]))]
+      .filter(x=>x!=null && Number(x)>0).sort((a,b)=>a-b);
+    yearSel.innerHTML = '<option value="all">Todos</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  }
+
   if(componentList.length===0){
     input.disabled=true;
     document.getElementById('cmp-run').disabled=true;
@@ -469,16 +494,32 @@ function renderComparison(){
   const comp = resolved.component;
   const year = document.getElementById('cmp-ano').value;
   const period = document.getElementById('cmp-periodo').value;
-  const minN = Math.max(1, Number(document.getElementById('cmp-min').value)||1);
+  const minN = IS_APPROVAL_SNAPSHOT ? 0 : Math.max(1, Number(document.getElementById('cmp-min').value)||1);
   const ranking = [];
 
   Object.entries(APPROVAL).forEach(([id, rows]) => {
     const selected = rows.filter(r =>
       String(r[3])===comp.id &&
-      (year==='all' || String(r[1])===year) &&
-      (period==='all' || String(r[2])===period)
+      (IS_APPROVAL_SNAPSHOT || year==='all' || String(r[1])===year) &&
+      (IS_APPROVAL_SNAPSHOT || period==='all' || String(r[2])===period)
     );
     if(!selected.length) return;
+
+    if(IS_APPROVAL_SNAPSHOT){
+      const rates = selected.map(r=>Number(r[9])).filter(Number.isFinite);
+      if(!rates.length) return;
+      ranking.push({
+        id,
+        nome: RAW[id]?.[0] || ('Docente ' + id),
+        turmas: null,
+        aprovados: null,
+        reprovados: null,
+        total: null,
+        taxa: rates.reduce((a,b)=>a+b,0)/rates.length
+      });
+      return;
+    }
+
     const aprovados = selected.reduce((sum,r)=>sum+(Number(r[6])||0),0);
     const reprovados = selected.reduce((sum,r)=>sum+(Number(r[7])||0),0);
     const total = aprovados + reprovados;
@@ -492,15 +533,15 @@ function renderComparison(){
     });
   });
 
-  ranking.sort((a,b)=>b.taxa-a.taxa || b.total-a.total || a.nome.localeCompare(b.nome,'pt-BR'));
+  ranking.sort((a,b)=>b.taxa-a.taxa || (b.total||0)-(a.total||0) || a.nome.localeCompare(b.nome,'pt-BR'));
   const body = document.getElementById('ranking-body');
   body.innerHTML = ranking.slice(0,100).map((r,i)=>`
     <tr>
       <td><button class="prof-link" data-prof="${r.id}">${i+1}. ${escapeHtml(r.nome)}</button></td>
-      <td class="num">${r.turmas}</td>
-      <td class="num">${r.total}</td>
-      <td class="num">${r.aprovados}</td>
-      <td class="num">${r.reprovados}</td>
+      <td class="num">${r.turmas ?? '—'}</td>
+      <td class="num">${r.total ?? '—'}</td>
+      <td class="num">${r.aprovados ?? '—'}</td>
+      <td class="num">${r.reprovados ?? '—'}</td>
       <td class="num rate-strong">${r.taxa.toFixed(1)}%</td>
     </tr>
   `).join('');
@@ -508,9 +549,16 @@ function renderComparison(){
     selectProfessor(btn.dataset.prof);
     document.getElementById('panel').scrollIntoView({behavior:'smooth',block:'start'});
   }));
-  note.textContent = ranking.length
-    ? `${ranking.length} docente(s) com pelo menos ${minN} resultado(s) final(is) em ${comp.label}. Ordenação por taxa de aprovação; empates priorizam maior amostra.`
-    : `Nenhum docente atingiu o mínimo de ${minN} resultados finais para ${comp.label} nesse recorte.`;
+
+  if(IS_APPROVAL_SNAPSHOT){
+    note.textContent = ranking.length
+      ? `${ranking.length} docente(s) encontrados para ${comp.label}. Taxa histórica do snapshot de ${APPROVAL_SNAPSHOT_DATE}; contagens e filtros por semestre indisponíveis.`
+      : `Nenhum docente com taxa histórica disponível para ${comp.label} no snapshot de ${APPROVAL_SNAPSHOT_DATE}.`;
+  }else{
+    note.textContent = ranking.length
+      ? `${ranking.length} docente(s) com pelo menos ${minN} resultado(s) final(is) em ${comp.label}. Ordenação por taxa de aprovação; empates priorizam maior amostra.`
+      : `Nenhum docente atingiu o mínimo de ${minN} resultados finais para ${comp.label} nesse recorte.`;
+  }
   result.style.display = ranking.length ? 'block' : 'none';
 }
 
@@ -632,7 +680,7 @@ function applyFilters(){
   const anoSel = document.getElementById('f-ano').value;
   const perSel = document.getElementById('f-periodo').value;
   const discSel = document.getElementById('f-disciplina').value;
-  const allowedTurmas = discSel==='all'
+  const allowedTurmas = (IS_APPROVAL_SNAPSHOT || discSel==='all')
     ? null
     : new Set(currentApprovals.filter(r=>String(r[3])===discSel).map(r=>String(r[0])));
   let filtered = currentRegs.filter(r => {
@@ -642,13 +690,13 @@ function applyFilters(){
     return true;
   });
   const filteredApproval = currentApprovals.filter(r => {
-    if(anoSel !== 'all' && String(r[1]) !== anoSel) return false;
-    if(perSel !== 'all' && String(r[2]) !== perSel) return false;
+    if(!IS_APPROVAL_SNAPSHOT && anoSel !== 'all' && String(r[1]) !== anoSel) return false;
+    if(!IS_APPROVAL_SNAPSHOT && perSel !== 'all' && String(r[2]) !== perSel) return false;
     if(discSel !== 'all' && String(r[3]) !== discSel) return false;
     return true;
   });
   updateStats(filtered);
-  updateApprovalStats(filteredApproval);
+  updateApprovalStats(filteredApproval, discSel);
   renderTable(filtered);
   try{
     updateCharts(filtered);
@@ -684,7 +732,22 @@ function updateStats(regs){
   document.getElementById('s-alunos').textContent = qtdTotal + ' discentes no total';
 }
 
-function updateApprovalStats(rows){
+function updateApprovalStats(rows, discSel='all'){
+  if(IS_APPROVAL_SNAPSHOT){
+    if(discSel==='all'){
+      document.getElementById('s-aprovacao').textContent = '—';
+      document.getElementById('s-aprovacao-sub').textContent = 'Selecione uma disciplina para ver a taxa histórica';
+      return;
+    }
+    const rates = rows.map(r=>Number(r[9])).filter(Number.isFinite);
+    const rate = rates.length ? rates.reduce((a,b)=>a+b,0)/rates.length : null;
+    document.getElementById('s-aprovacao').textContent = rate==null ? '—' : rate.toFixed(1)+'%';
+    document.getElementById('s-aprovacao-sub').textContent = rate==null
+      ? 'Sem taxa histórica para essa disciplina'
+      : `Snapshot histórico de ${APPROVAL_SNAPSHOT_DATE} · sem contagens por aluno`;
+    return;
+  }
+
   const aprovados = rows.reduce((s,r)=>s+(Number(r[6])||0),0);
   const reprovados = rows.reduce((s,r)=>s+(Number(r[7])||0),0);
   const total = aprovados + reprovados;
