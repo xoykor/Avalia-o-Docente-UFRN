@@ -1,0 +1,59 @@
+name: Atualizar taxas de aprovação
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 1 * *"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/enrich_approval.py"
+      - ".github/workflows/update-approval.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-approval
+  cancel-in-progress: false
+
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Enriquecer banco com aprovação
+        run: python scripts/enrich_approval.py --db database.sqlite
+
+      - name: Validar resultado
+        run: |
+          python - <<'PY'
+          import sqlite3
+          db = sqlite3.connect("database.sqlite")
+          n = db.execute("SELECT COUNT(*) FROM aprovacao_turmas").fetchone()[0]
+          comps = db.execute(
+              "SELECT COUNT(DISTINCT id_componente_curricular) FROM aprovacao_turmas "
+              "WHERE id_componente_curricular IS NOT NULL"
+          ).fetchone()[0]
+          print(f"{n} linhas de aprovação; {comps} componentes.")
+          if n == 0:
+              raise SystemExit("A tabela de aprovação ficou vazia.")
+          PY
+
+      - name: Publicar banco atualizado
+        run: |
+          if git diff --quiet -- database.sqlite; then
+            echo "Sem alterações no banco."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add database.sqlite
+          git commit -m "data: atualizar taxas de aprovação da UFRN"
+          git push
