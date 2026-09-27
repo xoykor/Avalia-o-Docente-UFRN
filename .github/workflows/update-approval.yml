@@ -19,8 +19,10 @@ concurrency:
 
 jobs:
   atualizar:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     timeout-minutes: 90
+    env:
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4
 
