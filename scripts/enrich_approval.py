@@ -137,14 +137,38 @@ def collect_results(wanted_turmas: set[int], semesters: set[tuple[int, int]]):
 
     for sem, resource in resources:
         print(f"[matrículas] {sem[0]}.{sem[1]} — {resource.get('name')}")
+        # O conjunto pode conter mais de uma linha por discente (ex.: unidades/notas).
+        # Contamos cada discente no máximo uma vez por turma, apenas quando já existe
+        # uma situação final de aprovação ou reprovação.
+        seen_enrollments: set[tuple[int, str]] = set()
+        fallback_row = 0
         for row in rows_from_csv(resource["url"]):
             turma = as_int(first_present(row, ("id_turma",)))
             if turma not in wanted_turmas:
                 continue
             status = norm(first_present(row, ("descricao", "situacao", "situação", "status")))
+            if not (status.startswith("APROVADO") or status.startswith("REPROVADO")):
+                continue
+
+            discente = first_present(
+                row,
+                ("discente", "id_discente", "matricula", "matrícula", "registro_discente"),
+            )
+            if discente is not None and str(discente).strip():
+                enrollment_key = (turma, str(discente).strip())
+            else:
+                # Fallback conservador para formatos antigos que não exponham
+                # identificador do discente.
+                fallback_row += 1
+                enrollment_key = (turma, f"__row_{fallback_row}")
+
+            if enrollment_key in seen_enrollments:
+                continue
+            seen_enrollments.add(enrollment_key)
+
             if status.startswith("APROVADO"):
                 counts[turma][0] += 1
-            elif status.startswith("REPROVADO"):
+            else:
                 counts[turma][1] += 1
     return counts
 
