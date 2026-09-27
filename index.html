@@ -88,6 +88,36 @@
   .sugg-meta{font-size:11.5px; color:var(--ink-soft); white-space:nowrap; font-family:'Helvetica Neue',Arial,sans-serif;}
   .search-hint{font-family:'Helvetica Neue',Arial,sans-serif; font-size:12px; color:var(--ink-soft); margin-top:8px;}
 
+  .compare-block{
+    margin:24px 0 10px; padding:18px; background:var(--card);
+    border:1px solid var(--line); border-top:3px solid var(--gold); border-radius:2px;
+  }
+  .compare-head{display:flex;justify-content:space-between;gap:18px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px;}
+  .compare-title{font-size:20px;margin:0 0 4px;font-weight:400;}
+  .compare-sub{font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;color:var(--ink-soft);line-height:1.45;}
+  .compare-controls{display:grid;grid-template-columns:minmax(240px,2fr) repeat(3,minmax(110px,1fr)) auto;gap:10px;align-items:end;}
+  .compare-controls .filter-group input,
+  .compare-controls .filter-group select{
+    width:100%; font-family:'Helvetica Neue',Arial,sans-serif; font-size:13px; padding:8px 10px;
+    border:1px solid var(--ink); background:var(--card); color:var(--ink); border-radius:2px;
+  }
+  .compare-btn{
+    padding:9px 15px;border:1px solid var(--red-dark);background:var(--red);color:white;
+    font-family:'Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:600;border-radius:2px;cursor:pointer;
+  }
+  .compare-btn:hover{background:var(--red-dark);}
+  .compare-note{font-family:'Helvetica Neue',Arial,sans-serif;font-size:11.5px;color:var(--ink-soft);margin-top:10px;line-height:1.45;}
+  #comparison-result{display:none;margin-top:16px;}
+  table.ranking{width:100%;border-collapse:collapse;font-family:'Helvetica Neue',Arial,sans-serif;font-size:12.5px;}
+  table.ranking th,table.ranking td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;}
+  table.ranking th{background:var(--paper-dark);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-soft);}
+  table.ranking td.num{font-variant-numeric:tabular-nums;}
+  .prof-link{border:0;background:transparent;padding:0;color:var(--red-dark);font:inherit;font-weight:600;cursor:pointer;text-align:left;}
+  .prof-link:hover{text-decoration:underline;}
+  .rate-strong{font-weight:700;font-size:13.5px;}
+  @media(max-width:900px){.compare-controls{grid-template-columns:1fr 1fr;}.compare-controls .course-field{grid-column:1/-1;}}
+  @media(max-width:560px){.compare-controls{grid-template-columns:1fr;} .compare-controls .course-field{grid-column:auto;}}
+
   #empty-state{
     margin-top:70px; text-align:center; color:var(--ink-soft);
     font-family:'Helvetica Neue',Arial,sans-serif; font-size:13.5px;
@@ -186,6 +216,59 @@
     <div class="search-hint" id="search-hint"></div>
   </div>
 
+  <section class="compare-block">
+    <div class="compare-head">
+      <div>
+        <h2 class="compare-title">Comparar por taxa de aprovação</h2>
+        <div class="compare-sub">Escolha uma disciplina e compare docentes usando apenas resultados finais de matrícula.</div>
+      </div>
+    </div>
+    <div class="compare-controls">
+      <div class="filter-group course-field">
+        <label>Disciplina</label>
+        <input id="cmp-course" list="cmp-course-options" placeholder="Ex.: ECT3202 — Álgebra Linear" autocomplete="off">
+        <datalist id="cmp-course-options"></datalist>
+      </div>
+      <div class="filter-group">
+        <label>Ano</label>
+        <select id="cmp-ano"><option value="all">Todos</option></select>
+      </div>
+      <div class="filter-group">
+        <label>Período</label>
+        <select id="cmp-periodo">
+          <option value="all">Todos</option>
+          <option value="1">1º</option>
+          <option value="2">2º</option>
+          <option value="5">Especial 5</option>
+          <option value="6">Especial 6</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label>Mín. resultados</label>
+        <input id="cmp-min" type="number" min="1" step="1" value="20">
+      </div>
+      <button class="compare-btn" id="cmp-run" type="button">Comparar</button>
+    </div>
+    <div class="compare-note" id="cmp-note">A taxa é Aprovados ÷ (Aprovados + Reprovados). Trancamentos, cancelamentos e situações sem resultado final não entram no denominador.</div>
+    <div id="comparison-result">
+      <div class="table-scroll">
+        <table class="ranking">
+          <thead>
+            <tr>
+              <th>Professor(a)</th>
+              <th>Turmas</th>
+              <th>Resultados</th>
+              <th>Aprovados</th>
+              <th>Reprovados</th>
+              <th>Taxa de aprovação</th>
+            </tr>
+          </thead>
+          <tbody id="ranking-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <div id="empty-state">
     <div class="big">Busque um nome para começar</div>
     <div>Base com 6.287 docentes e 196.757 turmas avaliadas.</div>
@@ -208,7 +291,13 @@
             <option value="all">Todos</option>
             <option value="1">1º</option>
             <option value="2">2º</option>
+            <option value="5">Especial 5</option>
+            <option value="6">Especial 6</option>
           </select>
+        </div>
+        <div class="filter-group">
+          <label>Disciplina</label>
+          <select id="f-disciplina"><option value="all">Todas</option></select>
         </div>
       </div>
     </div>
@@ -234,6 +323,11 @@
         <div class="stat-value" id="s-turmas">—</div>
         <div class="stat-sub" id="s-alunos">— discentes no total</div>
       </div>
+      <div class="stat-card alt2">
+        <div class="stat-label">Taxa de aprovação</div>
+        <div class="stat-value" id="s-aprovacao">—</div>
+        <div class="stat-sub" id="s-aprovacao-sub">Sem dados de resultado final</div>
+      </div>
     </div>
 
     <section class="block">
@@ -257,6 +351,7 @@
               <th data-key="ano">Ano</th>
               <th data-key="periodo">Período</th>
               <th data-key="qtd">Discentes</th>
+              <th data-key="disc">Disciplina</th>
               <th data-key="pm">Postura (média)</th>
               <th data-key="pd">Postura (DP)</th>
               <th data-key="am">Atuação (média)</th>
@@ -281,7 +376,7 @@ async function loadData(){
     const resp = await fetch('database.sqlite');
     if(!resp.ok) throw new Error('HTTP ' + resp.status);
     const db = new SQL.Database(new Uint8Array(await resp.arrayBuffer()));
-    const res = db.exec("SELECT d.id_docente,d.nome_docente,r.ano,r.periodo,r.qtd_discentes,r.postura_profissional_media,r.postura_profissional_DP,r.atuacao_profissional_media,r.atuacao_profissional_DP,r.autoavaliacao_aluno_media,r.autoavaliacao_aluno_DP FROM registros r JOIN docentes d ON d.id_docente=r.id_docente ORDER BY r.id_docente,r.ano,r.periodo");
+    const res = db.exec("SELECT d.id_docente,d.nome_docente,r.ano,r.periodo,r.qtd_discentes,r.postura_profissional_media,r.postura_profissional_DP,r.atuacao_profissional_media,r.atuacao_profissional_DP,r.autoavaliacao_aluno_media,r.autoavaliacao_aluno_DP,r.id_turma FROM registros r JOIN docentes d ON d.id_docente=r.id_docente ORDER BY r.id_docente,r.ano,r.periodo");
     const RAW={};
     if(res.length){
       res[0].values.forEach(row => {
@@ -290,7 +385,21 @@ async function loadData(){
         RAW[id][1].push(registro);
       });
     }
+    const APPROVAL={};
+    try{
+      const ar = db.exec("SELECT id_docente,id_turma,ano,periodo,id_componente_curricular,codigo_componente,nome_componente,aprovados,reprovados,total_finalizados,taxa_aprovacao FROM aprovacao_turmas");
+      if(ar.length){
+        ar[0].values.forEach(row => {
+          const [id, ...registro] = row;
+          if(!APPROVAL[id]) APPROVAL[id]=[];
+          APPROVAL[id].push(registro);
+        });
+      }
+    }catch(err){
+      console.info('Banco ainda não possui dados de aprovação:', err);
+    }
     globalThis.RAW=RAW;
+    globalThis.APPROVAL=APPROVAL;
   }catch(e){ console.error('Falha ao carregar banco:', e); return; }
   init();
 }
@@ -301,6 +410,109 @@ function init(){
 
 const METRIC_LABELS = ['Postura Profissional','Atuação Profissional','Autoavaliação do Aluno'];
 const COLORS = ['#9c1c2e','#2c4a63','#3f6b4f'];
+const APPROVAL = globalThis.APPROVAL || {};
+const approvalByTurma = {};
+Object.values(APPROVAL).forEach(rows => rows.forEach(r => { approvalByTurma[String(r[0])] = r; }));
+
+function componentLabel(r){
+  if(!r) return '—';
+  const codigo = r[4], nome = r[5], id = r[3];
+  if(codigo && nome) return codigo + ' — ' + nome;
+  return nome || codigo || (id != null ? 'Componente ' + id : '—');
+}
+
+const componentMap = new Map();
+Object.values(APPROVAL).forEach(rows => rows.forEach(r => {
+  if(r[3] == null) return;
+  if(!componentMap.has(String(r[3]))) componentMap.set(String(r[3]), {id:String(r[3]), label:componentLabel(r)});
+}));
+const componentList = [...componentMap.values()].sort((a,b)=>a.label.localeCompare(b.label,'pt-BR'));
+
+function initApprovalComparison(){
+  const input = document.getElementById('cmp-course');
+  const datalist = document.getElementById('cmp-course-options');
+  const yearSel = document.getElementById('cmp-ano');
+  const note = document.getElementById('cmp-note');
+  datalist.innerHTML = componentList.map(c=>`<option value="${escapeHtml(c.label)}"></option>`).join('');
+  const years = [...new Set(Object.values(APPROVAL).flat().map(r=>r[1]))].filter(x=>x!=null).sort((a,b)=>a-b);
+  yearSel.innerHTML = '<option value="all">Todos</option>' + years.map(y=>`<option value="${y}">${y}</option>`).join('');
+  if(componentList.length===0){
+    input.disabled=true;
+    document.getElementById('cmp-run').disabled=true;
+    note.textContent='Os dados de aprovação ainda não foram incorporados ao banco local.';
+    return;
+  }
+  document.getElementById('cmp-run').addEventListener('click', renderComparison);
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); renderComparison(); } });
+}
+
+function resolveComponent(value){
+  const q = normalize(value.trim());
+  if(!q) return {error:'Escolha uma disciplina.'};
+  const exact = componentList.find(c => normalize(c.label)===q || c.id===value.trim());
+  if(exact) return {component:exact};
+  const matches = componentList.filter(c => normalize(c.label).includes(q));
+  if(matches.length===1) return {component:matches[0]};
+  if(matches.length>1) return {error:'Há mais de uma disciplina correspondente. Escolha uma opção exata da lista.'};
+  return {error:'Disciplina não encontrada nos dados de aprovação.'};
+}
+
+function renderComparison(){
+  const resolved = resolveComponent(document.getElementById('cmp-course').value);
+  const note = document.getElementById('cmp-note');
+  const result = document.getElementById('comparison-result');
+  if(resolved.error){
+    note.textContent = resolved.error;
+    result.style.display='none';
+    return;
+  }
+  const comp = resolved.component;
+  const year = document.getElementById('cmp-ano').value;
+  const period = document.getElementById('cmp-periodo').value;
+  const minN = Math.max(1, Number(document.getElementById('cmp-min').value)||1);
+  const ranking = [];
+
+  Object.entries(APPROVAL).forEach(([id, rows]) => {
+    const selected = rows.filter(r =>
+      String(r[3])===comp.id &&
+      (year==='all' || String(r[1])===year) &&
+      (period==='all' || String(r[2])===period)
+    );
+    if(!selected.length) return;
+    const aprovados = selected.reduce((sum,r)=>sum+(Number(r[6])||0),0);
+    const reprovados = selected.reduce((sum,r)=>sum+(Number(r[7])||0),0);
+    const total = aprovados + reprovados;
+    if(total < minN) return;
+    ranking.push({
+      id,
+      nome: RAW[id]?.[0] || ('Docente ' + id),
+      turmas: new Set(selected.map(r=>String(r[0]))).size,
+      aprovados, reprovados, total,
+      taxa: total ? 100*aprovados/total : 0
+    });
+  });
+
+  ranking.sort((a,b)=>b.taxa-a.taxa || b.total-a.total || a.nome.localeCompare(b.nome,'pt-BR'));
+  const body = document.getElementById('ranking-body');
+  body.innerHTML = ranking.slice(0,100).map((r,i)=>`
+    <tr>
+      <td><button class="prof-link" data-prof="${r.id}">${i+1}. ${escapeHtml(r.nome)}</button></td>
+      <td class="num">${r.turmas}</td>
+      <td class="num">${r.total}</td>
+      <td class="num">${r.aprovados}</td>
+      <td class="num">${r.reprovados}</td>
+      <td class="num rate-strong">${r.taxa.toFixed(1)}%</td>
+    </tr>
+  `).join('');
+  body.querySelectorAll('[data-prof]').forEach(btn => btn.addEventListener('click', ()=>{
+    selectProfessor(btn.dataset.prof);
+    document.getElementById('panel').scrollIntoView({behavior:'smooth',block:'start'});
+  }));
+  note.textContent = ranking.length
+    ? `${ranking.length} docente(s) com pelo menos ${minN} resultado(s) final(is) em ${comp.label}. Ordenação por taxa de aprovação; empates priorizam maior amostra.`
+    : `Nenhum docente atingiu o mínimo de ${minN} resultados finais para ${comp.label} nesse recorte.`;
+  result.style.display = ranking.length ? 'block' : 'none';
+}
 
 // build search index
 const entries = Object.entries(RAW).map(([id, v]) => {
@@ -319,6 +531,7 @@ function normalize(s){
 }
 
 document.getElementById('search-hint').textContent = '';
+initApprovalComparison();
 
 const searchInput = document.getElementById('search');
 const suggestionsBox = document.getElementById('suggestions');
@@ -377,6 +590,8 @@ window.addEventListener('load', () => {
 
 let evoChart = null, turmasChart = null;
 let currentRegs = [];
+let currentApprovals = [];
+let currentProfessorId = null;
 let sortState = {key:'ano', dir:-1};
 
 function selectProfessor(id){
@@ -389,7 +604,9 @@ function selectProfessor(id){
   document.getElementById('prof-name').textContent = v[0];
   document.getElementById('prof-id').textContent = 'Matrícula/ID SIGAA: ' + id;
 
+  currentProfessorId = String(id);
   currentRegs = v[1].slice().sort((a,b)=> a[0]-b[0] || a[1]-b[1]);
+  currentApprovals = (APPROVAL[id] || []).slice();
 
   // populate ano filter
   const anos = [...new Set(currentRegs.map(r=>r[0]))].sort();
@@ -398,21 +615,40 @@ function selectProfessor(id){
   fAno.value = 'all';
   document.getElementById('f-periodo').value = 'all';
 
+  const fDisc = document.getElementById('f-disciplina');
+  const comps = [...new Map(currentApprovals.filter(r=>r[3]!=null).map(r=>[String(r[3]),componentLabel(r)])).entries()]
+    .sort((a,b)=>a[1].localeCompare(b[1],'pt-BR'));
+  fDisc.innerHTML = '<option value="all">Todas</option>' + comps.map(([cid,label])=>`<option value="${cid}">${escapeHtml(label)}</option>`).join('');
+  fDisc.value = 'all';
+
   applyFilters();
 }
 
 document.getElementById('f-ano').addEventListener('change', applyFilters);
 document.getElementById('f-periodo').addEventListener('change', applyFilters);
+document.getElementById('f-disciplina').addEventListener('change', applyFilters);
 
 function applyFilters(){
   const anoSel = document.getElementById('f-ano').value;
   const perSel = document.getElementById('f-periodo').value;
+  const discSel = document.getElementById('f-disciplina').value;
+  const allowedTurmas = discSel==='all'
+    ? null
+    : new Set(currentApprovals.filter(r=>String(r[3])===discSel).map(r=>String(r[0])));
   let filtered = currentRegs.filter(r => {
     if(anoSel !== 'all' && String(r[0]) !== anoSel) return false;
     if(perSel !== 'all' && String(r[1]) !== perSel) return false;
+    if(allowedTurmas && !allowedTurmas.has(String(r[9]))) return false;
+    return true;
+  });
+  const filteredApproval = currentApprovals.filter(r => {
+    if(anoSel !== 'all' && String(r[1]) !== anoSel) return false;
+    if(perSel !== 'all' && String(r[2]) !== perSel) return false;
+    if(discSel !== 'all' && String(r[3]) !== discSel) return false;
     return true;
   });
   updateStats(filtered);
+  updateApprovalStats(filteredApproval);
   renderTable(filtered);
   try{
     updateCharts(filtered);
@@ -446,6 +682,16 @@ function updateStats(regs){
   document.getElementById('s-auto-dp').textContent = 'DP média ' + fmt(ud);
   document.getElementById('s-turmas').textContent = regs.length;
   document.getElementById('s-alunos').textContent = qtdTotal + ' discentes no total';
+}
+
+function updateApprovalStats(rows){
+  const aprovados = rows.reduce((s,r)=>s+(Number(r[6])||0),0);
+  const reprovados = rows.reduce((s,r)=>s+(Number(r[7])||0),0);
+  const total = aprovados + reprovados;
+  document.getElementById('s-aprovacao').textContent = total ? (100*aprovados/total).toFixed(1)+'%' : '—';
+  document.getElementById('s-aprovacao-sub').textContent = total
+    ? `${aprovados} aprovados · ${reprovados} reprovados · ${rows.length} turma(s)`
+    : 'Sem dados de resultado final nesse recorte';
 }
 
 function fmt(v){ return v==null ? '—' : v.toFixed(2); }
@@ -505,10 +751,15 @@ function updateCharts(regs){
 }
 
 function renderTable(regs){
-  const rows = regs.map(r => ({ano:r[0], periodo:r[1], qtd:r[2], pm:r[3], pd:r[4], am:r[5], ad:r[6], um:r[7], ud:r[8]}));
+  const rows = regs.map(r => ({
+    ano:r[0], periodo:r[1], qtd:r[2],
+    disc:componentLabel(approvalByTurma[String(r[9])]),
+    pm:r[3], pd:r[4], am:r[5], ad:r[6], um:r[7], ud:r[8]
+  }));
   rows.sort((a,b) => {
     const va=a[sortState.key], vb=b[sortState.key];
     if(va==null) return 1; if(vb==null) return -1;
+    if(typeof va==='string' || typeof vb==='string') return String(va).localeCompare(String(vb),'pt-BR') * sortState.dir;
     return (va-vb) * sortState.dir;
   });
   const body = document.getElementById('turmas-body');
@@ -517,6 +768,7 @@ function renderTable(regs){
       <td class="num">${r.ano}</td>
       <td class="num">${r.periodo}º</td>
       <td class="num">${r.qtd ?? '—'}</td>
+      <td>${escapeHtml(r.disc)}</td>
       <td class="num">${fmt(r.pm)}</td>
       <td class="num">${fmt(r.pd)}</td>
       <td class="num">${fmt(r.am)}</td>
