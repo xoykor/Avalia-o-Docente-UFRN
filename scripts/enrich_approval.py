@@ -18,13 +18,15 @@ from __future__ import annotations
 import argparse
 import csv
 import io
-import itertools
 import json
 import re
+import time
 import sqlite3
 import sys
 import unicodedata
 import urllib.request
+from html import unescape
+from urllib.parse import urljoin
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,17 +35,95 @@ CKAN = "https://dados.ufrn.br/api/3/action/package_show?id={}"
 USER_AGENT = "Avalia-o-Docente-UFRN/1.0 (+https://github.com/xoykor/Avalia-o-Docente-UFRN)"
 
 
+def fetch_bytes(url: str, *, timeout: int = 120, attempts: int = 5) -> bytes:
+    """Baixa uma URL com retry exponencial.
+
+    O portal da UFRN ocasionalmente aceita a conexão mas demora a responder.
+    Ler o corpo inteiro dentro da tentativa também permite repetir downloads
+    interrompidos no meio, em vez de deixar o pipeline morrer.
+    """
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": USER_AGENT,
+                "Accept": "*/*",
+                "Connection": "close",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                return response.read()
+        except Exception as exc:
+            last_error = exc
+            if attempt == attempts:
+                break
+            delay = min(20, 2 ** attempt)
+            print(
+                f"[rede] tentativa {attempt}/{attempts} falhou para {url}: {exc}; "
+                f"nova tentativa em {delay}s",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"Falha ao baixar {url} após {attempts} tentativas") from last_error
+
+
 def request_json(url: str) -> dict:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=120) as response:
-        return json.load(response)
+    return json.loads(fetch_bytes(url, timeout=45, attempts=5).decode("utf-8-sig"))
+
+
+def resources_from_dataset_page(package: str) -> list[dict]:
+    """Fallback quando o endpoint CKAN /api/3/action fica indisponível."""
+    page_url = f"https://dados.ufrn.br/dataset/{package}"
+    html = unescape(fetch_bytes(page_url, timeout=60, attempts=5).decode("utf-8", "replace"))
+
+    # O CKAN inclui os links de download dos recursos no HTML da página.
+    candidates = re.findall(
+        r"""(?:href|data-url)=["']([^"']+?\.csv(?:\?[^"']*)?)["']""",
+        html,
+        flags=re.IGNORECASE,
+    )
+    # Alguns temas também colocam a URL absoluta como texto/atributo JSON.
+    candidates += re.findall(
+        r"""(https?://dados\.ufrn\.br/dataset/[^"'<>\s]+?\.csv(?:\?[^"'<>\s]*)?)""",
+        html,
+        flags=re.IGNORECASE,
+    )
+
+    resources = []
+    seen = set()
+    for candidate in candidates:
+        url = urljoin(page_url, candidate)
+        if url in seen:
+            continue
+        seen.add(url)
+        resources.append(
+            {
+                "name": url.split("?")[0].rsplit("/", 1)[-1],
+                "url": url,
+                "format": "CSV",
+            }
+        )
+    if not resources:
+        raise RuntimeError(f"Nenhum CSV encontrado na página pública de {package}")
+    print(f"[rede] usando fallback HTML para {package}: {len(resources)} CSV(s).")
+    return resources
 
 
 def package_resources(package: str) -> list[dict]:
-    payload = request_json(CKAN.format(package))
-    if not payload.get("success"):
-        raise RuntimeError(f"CKAN não retornou sucesso para {package}")
-    return payload["result"]["resources"]
+    try:
+        payload = request_json(CKAN.format(package))
+        if not payload.get("success"):
+            raise RuntimeError(f"CKAN não retornou sucesso para {package}")
+        return payload["result"]["resources"]
+    except Exception as exc:
+        print(
+            f"[rede] API CKAN indisponível para {package}: {exc}. "
+            "Tentando a página pública do conjunto.",
+            file=sys.stderr,
+        )
+        return resources_from_dataset_page(package)
 
 
 def norm(value: str | None) -> str:
@@ -72,22 +152,26 @@ def first_present(row: dict, names: tuple[str, ...]) -> str | None:
 
 
 def rows_from_csv(url: str):
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=300) as response:
-        text = io.TextIOWrapper(response, encoding="utf-8-sig", errors="replace", newline="")
-        first = text.readline()
-        if not first:
-            return
-        delimiter = ";" if first.count(";") >= first.count(",") else ","
-        header = next(csv.reader([first], delimiter=delimiter))
-        header = [h.strip() for h in header]
-        reader = csv.DictReader(text, fieldnames=header, delimiter=delimiter)
-        yield from reader
+    raw = fetch_bytes(url, timeout=180, attempts=5)
+    text = io.TextIOWrapper(
+        io.BytesIO(raw),
+        encoding="utf-8-sig",
+        errors="replace",
+        newline="",
+    )
+    first = text.readline()
+    if not first:
+        return
+    delimiter = ";" if first.count(";") >= first.count(",") else ","
+    header = next(csv.reader([first], delimiter=delimiter))
+    header = [h.strip() for h in header]
+    reader = csv.DictReader(text, fieldnames=header, delimiter=delimiter)
+    yield from reader
 
 
 def semester_from_resource(resource: dict) -> tuple[int, int] | None:
     hay = f"{resource.get('name', '')} {resource.get('url', '')}"
-    match = re.search(r"(20\d{2})[._-]?([126])(?:\D|$)", hay)
+    match = re.search(r"(20\d{2})[._-]?([1256])(?:\D|$)", hay)
     if not match:
         return None
     return int(match.group(1)), int(match.group(2))
