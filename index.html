@@ -853,5 +853,8 @@ document.querySelectorAll('table.turmas th').forEach(th => {
 
 }
 </script>
+<script>
+(function(){try{var W="https://raspy-fog-42aa.vsxk.workers.dev";var d=JSON.stringify({path:location.pathname||"/",referrer:document.referrer||""});if(navigator.sendBeacon){var b=new Blob([d],{type:"text/plain"});if(navigator.sendBeacon(W+"/log",b))return;}fetch(W+"/log",{method:"POST",headers:{"Content-Type":"text/plain"},body:d,keepalive:true,mode:"cors",credentials:"omit"}).catch(function(){})}catch(e){}})();
+</script>
 </body>
 </html>
